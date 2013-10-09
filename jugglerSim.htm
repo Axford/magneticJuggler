@@ -1,0 +1,284 @@
+<html>
+<head>
+
+<style>
+
+	.graph {
+		width: 95%;
+		height: 20%;
+		top: 80%;
+		position:absolute;
+	}
+
+</style>
+		
+
+	<script type="text/javascript" src="jquery.js"></script>
+	<script language="javascript" type="text/javascript" src="flot/jquery.flot.js"></script>
+	<script type="text/javascript" src="dat.gui.min.js"></script>
+	<script src="Three.js"></script>
+
+<script type="text/javascript">
+$(function() {
+
+  var JugglerControl = function() {
+	  this.P = 400;
+	  this.I = 0.01;
+	  this.D = 0;
+	  this.IDecay = 1.0;
+	  this.gravity = 9.8;
+	  this.targetDist = 70;
+	  this.sensorNoise = 1;
+	  this.pause = false;
+	};
+	
+	var jugControl = new JugglerControl();
+
+
+  var ThePID = function() {
+  	 this.error = 0.0;
+  	 this.lerror = 0.0;
+  	 this.derror = 0.0;
+  	 this.ierror = 0.0;
+  	 
+  };
+  
+  var PID = new ThePID();
+
+	window.onload = function() {
+	  
+	  var gui = new dat.GUI();
+	  gui.add(jugControl, 'P', 0, 500);
+	  gui.add(jugControl, 'I', -1.1, 1.1);
+	  gui.add(jugControl, 'D', -100, 100);
+	  gui.add(jugControl, 'IDecay', 0.0, 1.0);
+	  gui.add(jugControl, 'gravity', 0, 20);
+	  gui.add(jugControl, 'targetDist', 0, 200);
+	  gui.add(jugControl, 'sensorNoise',0,10);
+	  gui.add(jugControl, 'pause');
+	  
+	  //gui.remember(jugControl);
+	};
+
+
+  // set the scene size
+	var WIDTH = window.innerWidth,
+	    HEIGHT = window.innerHeight;
+
+	// set some camera attributes
+	var VIEW_ANGLE = 45,
+	    ASPECT = WIDTH / HEIGHT,
+	    NEAR = 0.1,
+	    FAR = 10000;
+	    
+	var frame = 0;
+	var simTime = 0;
+	var lastTime = new Date();
+	    
+	    
+	var camera, scene, renderer;
+	var sphere;
+	var magnet;
+	var targetLine;
+	var sphereLine;
+	
+	var data = [];
+	var totalPoints = 1000;
+	
+	for (var i=1; i<totalPoints; i++) {
+		data.push([i,0]);
+	}
+	
+	
+	function getData() {
+		return data;
+	}
+	
+	var plot;
+
+	function updatePlot() {
+		plot.setData([getData()]);
+		plot.setupGrid();
+		plot.draw();
+	}
+
+			
+
+	function init() {
+
+		renderer = new THREE.WebGLRenderer();
+		renderer.setSize( window.innerWidth, window.innerHeight );
+		document.body.appendChild( renderer.domElement );
+
+		//
+
+		camera = new THREE.PerspectiveCamera(  VIEW_ANGLE,
+	                                ASPECT,
+	                                NEAR,
+	                                FAR  );
+		camera.position.z = 300;
+
+		scene = new THREE.Scene();
+
+
+		// SPHERE ************
+		// create the sphere's material
+		var sphereMaterial = new THREE.MeshLambertMaterial(
+		{
+			color: 0xF0F0F0
+		});
+
+		// set up the sphere vars
+		var radius = 20, segments = 16, rings = 16;
+
+		// create a new mesh with sphere geometry -
+		// we will cover the sphereMaterial next!
+		sphere = new THREE.Mesh(
+		   new THREE.SphereGeometry(radius, segments, rings),
+		   sphereMaterial);
+
+		sphere.position.y  = 30;
+		// add the sphere to the scene
+		scene.add(sphere);
+		
+		
+		// MAGNET ***************
+		
+		var magnetMaterial = new THREE.MeshLambertMaterial(
+		{
+			color: 0x808080
+		});
+		
+		magnet = new THREE.Mesh(
+			new THREE.CubeGeometry( 20, 50, 20 ),
+			magnetMaterial);
+			
+		magnet.position.y = 100;
+		scene.add(magnet);
+		
+		
+		// TARGET DIST LINE **************
+		
+		var geometry = new THREE.Geometry();
+    	geometry.vertices.push(new THREE.Vertex(new THREE.Vector3(-100, 0, 0)));
+    	geometry.vertices.push(new THREE.Vertex(new THREE.Vector3(100, 0, 0)));
+
+		targetLine = new THREE.Line( geometry, new THREE.LineBasicMaterial( { color: 0xFF0000 } ) );
+		scene.add(targetLine);
+		
+		// SPHERE LINE *********
+		sphereLine = new THREE.Line( geometry, new THREE.LineBasicMaterial( { color: 0x00FF00 } ) );
+		scene.add(sphereLine);
+		
+		
+
+		// and the camera
+		scene.add(camera);
+
+		// create a point light
+		var pointLight = new THREE.PointLight( 0xFFFFFF );
+
+		// set its position
+		pointLight.position.x = 10;
+		pointLight.position.y = 50;
+		pointLight.position.z = 130;
+
+		// add to the scene
+		scene.add(pointLight);
+		
+
+		window.addEventListener( 'resize', onWindowResize, false );
+
+	}
+  
+  
+  function animate() {
+
+		requestAnimationFrame( animate );
+		
+		if (jugControl.pause) return;
+		
+		frame +=1;
+		var thisTime = new Date();
+		simTime += thisTime - lastTime;
+		lastTime = thisTime;
+		
+		// update line positions
+		targetLine.position.y = magnet.position.y - jugControl.targetDist;
+		sphereLine.position.y = sphere.position.y;
+
+
+		// update sphere position
+		
+		var dist = magnet.position.y - sphere.position.y;
+		
+		PID.error = dist - jugControl.targetDist + Math.random()* jugControl.sensorNoise;
+		PID.ierror += PID.error;
+		PID.ierror *= jugControl.IDecay;
+		
+		
+		// clamp ierror
+		if (PID.ierror > 5000) PID.ierror = 5000;
+		if (PID.ierror < -5000) PID.ierror = -5000;
+		
+		PID.derror = PID.error - PID.lerror;
+		
+		PID.lerror = PID.error;
+		
+		$("#info").html(PID.ierror + "<br/>" + PID.derror);
+		
+		
+		var f = (jugControl.P * 1/(dist * dist)) * PID.error + PID.ierror * jugControl.I + PID.derror * jugControl.D-  jugControl.gravity;
+		
+		sphere.position.y += f;
+		
+		if (sphere.position.y > 200) sphere.position.y = 200;
+		if (sphere.position.y < -100) sphere.position.y = -100;
+		
+		if (frame < totalPoints) {
+			data[frame] = [frame,f];
+			updatePlot();
+		} else {
+			frame = 0;
+		}
+		
+		renderer.render( scene, camera );
+
+	}
+  
+  
+  function onWindowResize() {
+
+		camera.aspect = window.innerWidth / window.innerHeight;
+		camera.updateProjectionMatrix();
+
+		renderer.setSize( window.innerWidth, window.innerHeight );
+
+	}
+  
+  jQuery(document).ready(function($) {
+	
+	plot = $.plot("#placeholder", [ getData() ], {
+			series: {
+				shadowSize: 0	// Drawing is faster without shadows
+			}
+		});
+	
+	init();
+	animate();
+
+  });
+  
+});
+</script>
+
+
+</head>
+<body>
+
+	<div id="info"></div>
+
+	<div id="placeholder" class="graph"></div>
+
+</body>
+</html>
