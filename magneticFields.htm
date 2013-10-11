@@ -1,0 +1,177 @@
+<html>
+<head>
+
+
+</head>
+<body>
+
+<canvas id="myCanvas" width="200" height="200"></canvas>
+
+<script type="text/javascript">
+
+function sqr(a) {
+	return a * a;
+}
+
+function max(x,y) { return Math.max(x,y); }
+function max3(x,y,z) { return Math.max(Math.max(x,y),z); }
+function min(x,y) { return Math.min(x,y); }
+function min3(x,y,z) { return Math.min(Math.min(x,y),z); }
+
+
+
+function cel(kc, p, c, s) {
+	
+	if (kc == 0) {
+		//return Number.Nan;
+	}
+
+	var errtol = 0.00001;
+	var k = Math.abs(kc);
+	var pp = p;
+	var cc = c;
+	var ss = s;
+	var em = 1.0;
+	var f,g,q;
+	
+	if (p > 0) {
+		pp = p * p;
+		ss = s/pp;
+	} else {
+		f = kc*kc;
+		q = 1.0 - f;
+		g = 1.0 - pp;
+		f = f - pp;
+		q = q * (ss - c*pp);
+		pp = sqr(f/g);
+		cc = (c - ss)/g;
+		ss = -q/(g * g * pp) + cc*pp;
+	}
+	
+	f = cc;
+	cc = cc + ss/pp;
+	g = k/pp;
+	ss = 2 * (ss + f*g);
+	pp = g + pp;
+	g = em;
+	em = k + em;
+	kk = k;
+	var lc = 0;
+	while ( Math.abs(g-k) > g*errtol && lc < 1000) {
+		k = 2*kk*kk;
+		kk = k*em;
+		f=cc;
+		cc= cc+ ss/pp;
+		g=kk/pp;
+		ss=2*(ss+f*g);
+		pp = g+pp;
+		g=em;
+		em = k+em;
+		lc++;
+	}
+	
+
+	return (Math.PI/2.0) * (ss + cc*em)/(em*(em + pp));
+}
+
+
+function evalField(a,b,I,n,p,t,z) {
+	var B = [0,0];    // Bp, Bz
+	
+	var mu0 = 0.00000125663706;
+	
+	var B0 = mu0 * n * I / Math.PI;
+	
+	var zp = z + b;
+	var zn = z - b;
+	
+	var alphap = a / Math.sqrt(zp*zp + sqr(p + a)); 
+	var alphan = a / Math.sqrt(zn*zn + sqr(p + a)); 
+	
+	var betap = zp / Math.sqrt(zp*zp + sqr(p+a));
+	var betan = zn / Math.sqrt(zn*zn + sqr(p+a));
+	
+	var gamma = (a - p) / (a + p);
+	var gamma2 = sqr(gamma);
+	
+	var kp = Math.sqrt((zp*zp + sqr(a - p)) / (zp*zp + sqr(a + p)));
+	var kn = Math.sqrt((zn*zn + sqr(a - p)) / (zn*zn + sqr(a + p)));
+	
+	B[0] = B0 * (alphap * cel(kp, 1, 1, -1) - alphan * cel(kn, 1, 1, -1));
+	
+	B[1] = ((B0 * a)/(a + p)) * (betap * cel(kp, gamma2, 1, gamma) - betan * cel(kn, gamma2, 1, gamma));
+	
+	
+	return B;
+}
+
+
+
+/// magnet properties
+magB = 20;  // half length 20 mm
+magA = 20;  // radius 10 mm 
+magI = 1000;   // 1 amp current
+magN = 100000;  // turns per unit length
+
+
+
+function drawMag(ctx, cx, cy) {
+	ctx.beginPath();
+	ctx.strokeStyle = "#f00";
+	ctx.strokeRect(cx - magA, cy - magB, 2*magA, 2*magB);
+}
+
+var cx = 100;
+var cy = 100;
+
+
+var canvas=document.getElementById('myCanvas');
+var ctx=canvas.getContext('2d');
+
+
+drawMag(ctx, cx,cy);
+
+
+// get max field strength
+var maxB = evalField(magA/1000, magB/1000, magI, magN, 0, 0, 0);
+
+console.log(maxB);
+
+
+ctx.beginPath();
+ctx.strokeStyle = "#000";
+
+// iterate over field
+for (var x = -100; x<100; ) {
+	for (var y = -100; y<100; ) {
+		var p = x/1000;
+		var t = 0;
+		if (x < 0) {
+			p = -p;
+		}
+		var z = y/1000;
+		
+		var B = evalField(magA/1000, magB/1000, magI, magN, p, t, z);
+		
+		// plot something
+		var x1 = x+ B[0]*10/maxB[1];
+		var y1 = y+ B[1] * 10/maxB[1];
+		
+		ctx.moveTo(cx + x, cy+ y);
+		ctx.lineTo(cx+x1,cy+y1);
+		
+		y += 5;
+	}
+	x += 5;
+} 
+
+ctx.stroke();
+
+
+
+
+</script>
+
+
+</body>
+</html>
