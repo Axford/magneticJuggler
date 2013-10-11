@@ -414,7 +414,10 @@ var my = 0;
 
   
 function draw() {
-	
+	// Fade out the lines slowly by drawing a rectangle over the entire canvas
+		ctx.fillStyle = 'rgba(255,255,255,0.05)';
+   		if (Math.random() < 0.01) 
+   			ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
   
     // update particles
     for (var lc = 0; lc < numP; lc++) {
@@ -425,7 +428,7 @@ function draw() {
     	
     	var c = 230 - Math.round(230 * BV.length() / maxB);
 		ctx.beginPath();
-		ctx.strokeStyle = "rgb(" + c + "," + c + ","+ c+ ")";
+		ctx.strokeStyle = "rgb(" + (c+20) + "," + c + ","+ c+ ")";
     	
     	
     	BV.normalize();
@@ -446,7 +449,7 @@ function draw() {
     	
     	
     	//  check for boundary conditions and reset
-    	if (p.length() > 300 || Math.random() < 0.001) {
+    	if (p.length() > 300 || Math.random() < 0.01) {
     		p.x = mx + Math.random() * 20 - cx;
     		p.y = my + (Math.random() * 20) - cy;
     	}
