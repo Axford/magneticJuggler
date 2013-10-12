@@ -9,6 +9,11 @@
 		top: 80%;
 		position:absolute;
 	}
+	
+	#info {
+		position:absolute;
+		top: 50px;
+	}
 
 </style>
 		
@@ -34,7 +39,7 @@ $(function() {
 	  this.IDecay = 1.0;
 	  this.gravity = 0.98;
 	  this.targetDist = 70;
-	  this.sensorNoise = 1;
+	  this.sensorNoise = 0;
 	  this.pause = false;
 	};
 	
@@ -56,7 +61,7 @@ $(function() {
 	  
 	  var gui = new dat.GUI();
 	  gui.add(jugControl, 'P', 0, 1000);
-	  gui.add(jugControl, 'I', 0, 500);
+	  gui.add(jugControl, 'I', 0, 10, 0.1);
 	  gui.add(jugControl, 'D', -100, 100);
 	  gui.add(jugControl, 'IDecay', 0.0, 1.0);
 	  gui.add(jugControl, 'gravity', 0, 20);
@@ -204,6 +209,7 @@ $(function() {
   function animate() {
 
 		requestAnimationFrame( animate );
+		//setTimeout( function() { requestAnimationFrame( animate ); }, 1000 / 10 );
 		
 		if (jugControl.pause) return;
 		
@@ -211,6 +217,13 @@ $(function() {
 		var thisTime = new Date();
 		simTime += thisTime - lastTime;
 		lastTime = thisTime;
+		
+		
+		var time = Date.now() * 0.001;
+		magnet.position.x = Math.cos(time) * 35;
+		
+		//jugControl.targetDist = 80 + Math.sin(time) * 20;
+		
 		
 		// update line positions
 		targetLine.position.y = magnet.position.y - jugControl.targetDist;
@@ -221,11 +234,12 @@ $(function() {
 		
 		var dist = magnet.position.y - sphere.position.y;
 		
-		PID.error = dist - jugControl.targetDist + Math.random()* jugControl.sensorNoise;
+		PID.error = dist - jugControl.targetDist + (Math.random()-0.5)* jugControl.sensorNoise;
 		
 		// what if we use velocity required to reach target height!
 		// calc max height for current conditions
 		var mh = sqr(sphere.v.y) / (2 * jugControl.gravity);
+		
 		
 		
 		//PID.smootherror = (PID.smootherror * 1 + PID.error)/2;
@@ -244,32 +258,78 @@ $(function() {
 		
 		PID.lerror = PID.smootherror;
 		
-		$("#info").html(PID.ierror + "<br/>" + PID.derror);
+		
 		
 		
 		var f = jugControl.P * PID.smootherror + PID.ierror * jugControl.I + PID.derror * jugControl.D;
 		
 		if (f < 0) f = 0;
 		
-		var time = Date.now() * 0.001;
-		//magnet.position.x = Math.cos(time) * 15;
+		
+		if (PID.error < 0) {
+			if (sphere.v.y  < 0) {
+				$("#info").html("cancelling");
+				
+				// ??  some kind of cancelling force?
+				//f = -sphere.v.y/2;
+				f = 0;
+				
+				
+			} else {
+				f = 0;
+				
+				$("#info").html("dropping");
+			}
+			
+		} else {
+			
+			// calc required velocity from current position
+			var vreq = Math.sqrt(2*jugControl.gravity * PID.error);
+			
+			// work out delta
+			var vc = vreq - sphere.v.y;
+			
+			f = vc ;
+			
+			
+			$("#info").html("pulling");
+			
+		}
 		
 		var x = sphere.position.x - magnet.position.x;
 		var y = dist;
 		
-		if (f > 5000) f= 5000;
+		if (f > 0) {
+			// add in integral control
+			f += PID.ierror * jugControl.I;
 		
-		var V = calcSolenoidField(x,y,20,50,f,10);
+			// now calc required f to achieve desired magnetic field strength
+			
+			var V = calcSolenoidField(x,y,20,50,f,5);
+			var lc =0;
+			var ftarget = f;
+			
+			// assume straight line and solve
+			f = (ftarget / V.x) * f;	
+			
+		}
 		
 		
-		//f = V.x - jugControl.gravity;
+		
+		
+		
+		var V = calcSolenoidField(x,y,20,50,f,5);
+		
+		
 		var fy = V.x ;
 		var fx = (x < 0?-1:1)*V.y ;
 		
-		sphere.v.x *= 0.98;  
+		
+		
+		sphere.v.x *= 0.99;  
 		sphere.v.x += (-fx);
 		
-		sphere.v.y *= 0.98;
+		sphere.v.y *= 0.99;
 		sphere.v.y += (fy - jugControl.gravity);  
 		
 		
@@ -277,10 +337,9 @@ $(function() {
 		sphere.position.y += sphere.v.y;
 		
 		
-		//if (sphere.position.x > 20) sphere.position.x = 20;
 		
-		if (sphere.position.y > magnet.position.y - 60) {
-			sphere.position.y = magnet.position.y - 60;
+		if (sphere.position.y > magnet.position.y - 45) {
+			sphere.position.y = magnet.position.y - 45;
 			sphere.v.y = 0;
 		}
 		if (sphere.position.y < -100) {
@@ -289,7 +348,7 @@ $(function() {
 		}
 		
 		if (frame < totalPoints) {
-			data[frame] = [frame,mh];
+			data[frame] = [frame,PID.ierror];
 			updatePlot();
 		} else {
 			frame = 0;
@@ -345,5 +404,7 @@ $(function() {
 
 	<div id="placeholder" class="graph"></div>
 
+	<canvas id="canvas" width="400" height="400" style="position:absolute;"></canvas>
+	
 </body>
 </html>
