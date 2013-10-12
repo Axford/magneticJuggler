@@ -12,7 +12,7 @@
 	
 	#info {
 		position:absolute;
-		top: 50px;
+		left: 250px;
 	}
 
 </style>
@@ -34,13 +34,14 @@ $(function() {
 
   var JugglerControl = function() {
 	  this.P = 50;
-	  this.I = 0;
+	  this.I = 0.0;
 	  this.D = 0;
 	  this.IDecay = 1.0;
 	  this.gravity = 0.98;
 	  this.targetDist = 70;
 	  this.sensorNoise = 0;
 	  this.pause = false;
+	  this.maxRot = 0;
 	};
 	
 	var jugControl = new JugglerControl();
@@ -68,6 +69,7 @@ $(function() {
 	  gui.add(jugControl, 'targetDist', 0, 200);
 	  gui.add(jugControl, 'sensorNoise',0,10);
 	  gui.add(jugControl, 'pause');
+	  gui.add(jugControl, 'maxRot',0,6);
 	  
 	  //gui.remember(jugControl);
 	};
@@ -204,6 +206,20 @@ $(function() {
 		window.addEventListener( 'resize', onWindowResize, false );
 
 	}
+	
+	
+  function rotateVector2(V, ang) {
+  	 var l = V.length();
+  	 var VT = new THREE.Vector2(V.x,V.y);
+  	 
+  	 var sang = Math.atan2(V.x, V.y);
+  	 
+  	 sang += ang;
+  	 VT.x = l * Math.sin(sang);
+  	 VT.y = l * Math.cos(sang);	 
+  	  
+  	 return VT;
+  }
   
   
   function animate() {
@@ -219,22 +235,44 @@ $(function() {
 		lastTime = thisTime;
 		
 		
-		var time = Date.now() * 0.001;
-		magnet.position.x = Math.cos(time) * 35;
+		var time = Date.now() * 0.007;
+		//magnet.position.x = Math.cos(time) * 35;
 		
-		//jugControl.targetDist = 80 + Math.sin(time) * 20;
+		var magAng = Math.cos(time) * jugControl.maxRot;
+		
+		magnet.rotation.z = magAng;
+		
+		
+		// sphere position vector
+		var SP = new THREE.Vector2(sphere.position.x, sphere.position.y);
+		
+		// sphere position in magnet coordinates
+		var SPM = new THREE.Vector2(SP.x, -(magnet.position.y - SP.y));
+		
+		SPM = rotateVector2(SPM,magAng);
+		SPM.y = SPM.y;
 		
 		
 		// update line positions
-		targetLine.position.y = magnet.position.y - jugControl.targetDist;
+		var VT = new THREE.Vector2(0,-jugControl.targetDist);
+		VT = rotateVector2(VT,-magAng);
+		targetLine.position.x = magnet.position.x + VT.x;
+		targetLine.position.y = magnet.position.y +VT.y;
+		targetLine.rotation.z = magAng;
+		
+		sphereLine.position.x = sphere.position.x;
 		sphereLine.position.y = sphere.position.y;
+		sphereLine.rotation.z = magAng;
 
 
 		// update sphere position
 		
-		var dist = magnet.position.y - sphere.position.y;
+		var dist = SPM.length();
 		
-		PID.error = dist - jugControl.targetDist + (Math.random()-0.5)* jugControl.sensorNoise;
+		
+		PID.error = -SPM.y - jugControl.targetDist + (Math.random()-0.5)* jugControl.sensorNoise;
+		
+		
 		
 		// what if we use velocity required to reach target height!
 		// calc max height for current conditions
@@ -296,16 +334,14 @@ $(function() {
 			
 		}
 		
-		var x = sphere.position.x - magnet.position.x;
-		var y = dist;
 		
 		if (f > 0) {
 			// add in integral control
-			f += PID.ierror * jugControl.I;
+			//f += PID.ierror * jugControl.I;
 		
 			// now calc required f to achieve desired magnetic field strength
 			
-			var V = calcSolenoidField(x,y,20,50,f,5);
+			var V = calcSolenoidField(SPM.x,SPM.y,20,50,f,10);
 			var lc =0;
 			var ftarget = f;
 			
@@ -317,25 +353,72 @@ $(function() {
 		
 		
 		
+		//var V = calcSolenoidField(x,y,20,50,f,5);
+		var VO = calcSolenoidField(SPM.x,SPM.y,20,50,f,10);
 		
-		var V = calcSolenoidField(x,y,20,50,f,5);
+		VO.y = VO.y * (SPM.x < 0?-1:1);
+		
+		// rotate V back into world coordinates
+		// invert axes
+		var VT = new THREE.Vector2(VO.y,VO.x);
 		
 		
-		var fy = V.x ;
-		var fx = (x < 0?-1:1)*V.y ;
+		V = rotateVector2(VT,-magAng);
 		
 		
+		var fy = V.y;
+		var fx = V.x;
 		
-		sphere.v.x *= 0.99;  
-		sphere.v.x += (-fx);
 		
-		sphere.v.y *= 0.99;
+		sphere.v.x *= 0.98;  
+		sphere.v.x += (fx);
+		
+		sphere.v.y *= 0.98;
 		sphere.v.y += (fy - jugControl.gravity);  
 		
 		
 		sphere.position.x += sphere.v.x;
 		sphere.position.y += sphere.v.y;
 		
+		
+		var canvas=document.getElementById('canvas');
+		var ctx=canvas.getContext('2d');
+
+		ctx.clearRect(0, 0, canvas.width, canvas.height)
+		ctx.strokeStyle = "#CCC";
+		
+		var cx = 100;
+		var cy = 100;
+		
+		// draw x
+		ctx.beginPath();
+		ctx.moveTo(-100 + cx, cy);
+		ctx.lineTo(100 + cx, cy);
+		ctx.stroke();
+		
+		
+		// draw y
+		ctx.beginPath();
+		ctx.moveTo(cx, cy-100);
+		ctx.lineTo(cx, cy+110);
+		ctx.stroke();
+		
+		ctx.strokeStyle = "#000";
+		
+		// draw magnet
+		ctx.strokeRect(cx - 10, cy - 25, 20, 50);
+		
+		// draw sphere
+		ctx.beginPath();
+		ctx.arc(SPM.x + cx, -SPM.y + cy, 10, 0, 2*Math.PI);
+		ctx.stroke();
+		
+		// draw magnetic field vector
+		ctx.beginPath();
+		ctx.strokeStyle = "#F00";
+		ctx.moveTo(cx + SPM.x, cy -SPM.y);
+		ctx.lineTo(cx + SPM.x + 20*VT.x, cy - SPM.y - 20*VT.y);
+		ctx.stroke();
 		
 		
 		if (sphere.position.y > magnet.position.y - 45) {
@@ -348,7 +431,7 @@ $(function() {
 		}
 		
 		if (frame < totalPoints) {
-			data[frame] = [frame,PID.ierror];
+			data[frame] = [frame,PID.error];
 			updatePlot();
 		} else {
 			frame = 0;
