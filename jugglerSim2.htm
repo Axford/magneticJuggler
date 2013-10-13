@@ -42,6 +42,12 @@ $(function() {
 	  this.sensorNoise = 0;
 	  this.pause = false;
 	  this.maxRot = 0;
+	  
+	  this.phase = false;
+	  this.coast = false;
+	  this.targetAng = 1;
+	  this.oscillations = 0;
+	  this.driveV = 0;
 	};
 	
 	var jugControl = new JugglerControl();
@@ -212,11 +218,11 @@ $(function() {
   	 var l = V.length();
   	 var VT = new THREE.Vector2(V.x,V.y);
   	 
-  	 var sang = Math.atan2(V.x, V.y);
+  	 var sang = Math.atan2(V.y, V.x);
   	 
   	 sang += ang;
-  	 VT.x = l * Math.sin(sang);
-  	 VT.y = l * Math.cos(sang);	 
+  	 VT.x = l * Math.cos(sang);
+  	 VT.y = l * Math.sin(sang);	 
   	  
   	 return VT;
   }
@@ -235,12 +241,7 @@ $(function() {
 		lastTime = thisTime;
 		
 		
-		var time = Date.now() * 0.007;
-		//magnet.position.x = Math.cos(time) * 35;
-		
-		var magAng = Math.cos(time) * jugControl.maxRot;
-		
-		magnet.rotation.z = magAng;
+		var magAng = magnet.rotation.z;
 		
 		
 		// sphere position vector
@@ -248,14 +249,31 @@ $(function() {
 		
 		// sphere position in magnet coordinates
 		var SPM = new THREE.Vector2(SP.x, -(magnet.position.y - SP.y));
-		
 		SPM = rotateVector2(SPM,magAng);
-		SPM.y = SPM.y;
+		
+		// gravity vector, and in magnet coordinates
+		var G = new THREE.Vector2(0,-jugControl.gravity);
+		var GM = rotateVector2(G, magAng);
+		
+		
+		// sphere velocity vector in magnet coordinates
+		var VM = new THREE.Vector2(sphere.v.x, sphere.v.y);
+		VM = rotateVector2(VM,magAng);
+		
+		
+		// centripetal force vector in magnet coordinates
+		var CM = new THREE.Vector2(SPM.x,SPM.y);
+		var cR = CM.length();  // centripetal radius
+		CM.normalize();
+		var cMag = 1.0 * sqr(VM.length()) / cR;
+		CM.multiplyScalar(cMag);
+		
+		
 		
 		
 		// update line positions
 		var VT = new THREE.Vector2(0,-jugControl.targetDist);
-		VT = rotateVector2(VT,-magAng);
+		VT = rotateVector2(VT,magAng);
 		targetLine.position.x = magnet.position.x + VT.x;
 		targetLine.position.y = magnet.position.y +VT.y;
 		targetLine.rotation.z = magAng;
@@ -322,7 +340,9 @@ $(function() {
 		} else {
 			
 			// calc required velocity from current position
-			var vreq = Math.sqrt(2*jugControl.gravity * PID.error);
+			
+			//var vreq = Math.sqrt(2*jugControl.gravity * PID.error);
+			var vreq = Math.sqrt(2*(-GM.y + CM.y) * PID.error);
 			
 			// work out delta
 			var vc = vreq - sphere.v.y;
@@ -381,6 +401,60 @@ $(function() {
 		sphere.position.y += sphere.v.y;
 		
 		
+		// control loop for magnet angle
+		// angle is relative to magnet axis
+		
+		var penT = 2 * Math.PI * Math.sqrt(SPM.length() / jugControl.gravity);
+		
+		var sAng = Math.atan2(SPM.x,-SPM.y);
+		var driveAng = jugControl.targetAng * Math.PI/180 + 0.1;
+		var drive = 0.04;
+		
+		if (jugControl.coast) {
+			if ((jugControl.phase && SPM.x <=0) || (!jugControl.phase && SPM.x >=0)) {
+				jugControl.coast = false;
+			
+				jugControl.oscillations += 1;
+			}	
+			
+		} else {
+			if (jugControl.phase) {
+				// driving clockwise
+				// switching target is when sphere velocity is zero
+			
+				if (sAng > driveAng) {
+					jugControl.phase = false;
+					jugControl.coast = true;
+				
+					// increase velocity
+					//jugControl.driveV += 0.001;
+					
+					jugControl.targetAng += 1;
+				}
+			
+			} else {
+				// driving counterclockwise
+				// -5
+				driveAng *= -1;
+			
+				drive *= -1;
+		
+				if (sAng < driveAng) {
+					jugControl.phase = true;
+					jugControl.coast = true;
+					//jugControl.driveV += 0.001;
+				}
+			}
+			
+			if (jugControl.driveV > 3) jugControl.driveV = 3;
+			
+		
+			magnet.rotation.z += (driveAng - sAng)/2;
+		}
+		
+		
+		
+		
 		var canvas=document.getElementById('canvas');
 		var ctx=canvas.getContext('2d');
 
@@ -410,14 +484,37 @@ $(function() {
 		
 		// draw sphere
 		ctx.beginPath();
-		ctx.arc(SPM.x + cx, -SPM.y + cy, 10, 0, 2*Math.PI);
+		ctx.arc(-SPM.x + cx, -SPM.y + cy, 10, 0, 2*Math.PI);
 		ctx.stroke();
+		
+		// draw gravity field vector
+		ctx.beginPath();
+		ctx.strokeStyle = "#F00";
+		ctx.moveTo(cx - SPM.x, cy -SPM.y);
+		ctx.lineTo(cx - SPM.x - 20*GM.x, cy - SPM.y - 20*GM.y);
+		ctx.stroke();
+		
+		// draw velocity vector
+		ctx.beginPath();
+		ctx.strokeStyle = "#550";
+		ctx.moveTo(cx - SPM.x, cy -SPM.y);
+		ctx.lineTo(cx - SPM.x - 20*VM.x, cy - SPM.y - 20*VM.y);
+		ctx.stroke();
+		
+		
+		// draw centripetal force vector
+		ctx.beginPath();
+		ctx.strokeStyle = "#00F";
+		ctx.moveTo(cx - SPM.x, cy -SPM.y);
+		ctx.lineTo(cx - SPM.x - 20*CM.x, cy - SPM.y - 20*CM.y);
+		ctx.stroke();
+		
 		
 		// draw magnetic field vector
 		ctx.beginPath();
-		ctx.strokeStyle = "#F00";
-		ctx.moveTo(cx + SPM.x, cy -SPM.y);
-		ctx.lineTo(cx + SPM.x + 20*VT.x, cy - SPM.y - 20*VT.y);
+		ctx.strokeStyle = "#0F0";
+		ctx.moveTo(cx - SPM.x, cy -SPM.y);
+		ctx.lineTo(cx - SPM.x - 20*VT.x, cy - SPM.y - 20*VT.y);
 		ctx.stroke();
 		
 		
@@ -431,7 +528,7 @@ $(function() {
 		}
 		
 		if (frame < totalPoints) {
-			data[frame] = [frame,PID.error];
+			data[frame] = [frame,sAng];
 			updatePlot();
 		} else {
 			frame = 0;
