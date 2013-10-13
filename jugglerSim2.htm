@@ -14,6 +14,10 @@
 		position:absolute;
 		left: 250px;
 	}
+	
+	#canvas {
+		position:absolute;
+	}
 
 </style>
 		
@@ -45,9 +49,15 @@ $(function() {
 	  
 	  this.phase = false;
 	  this.coast = false;
-	  this.targetAng = 1;
+	  this.targetAng = 20;
 	  this.oscillations = 0;
 	  this.driveV = 0;
+	  this.magRot = 0;
+	  this.magV = 0;  //  magnet angular velocity
+	  this.switchTime = new Date();
+	  this.oscTime = 0; // target for next oscillation
+	  this.VML = new THREE.Vector2(0,0);  // last velocity vector
+	  this.AMX = 0;  // smooth x acceleration in magnet coords
 	};
 	
 	var jugControl = new JugglerControl();
@@ -76,6 +86,8 @@ $(function() {
 	  gui.add(jugControl, 'sensorNoise',0,10);
 	  gui.add(jugControl, 'pause');
 	  gui.add(jugControl, 'maxRot',0,6);
+	  gui.add(jugControl, 'magRot',-180,180);
+	  gui.add(jugControl, 'targetAng',0,90);
 	  
 	  //gui.remember(jugControl);
 	};
@@ -103,21 +115,23 @@ $(function() {
 	var sphereLine;
 	
 	var data = [];
+	var data1 = [];
 	var totalPoints = 1000;
 	
 	for (var i=1; i<totalPoints; i++) {
 		data.push([i,0]);
+		data1.push([i,0]);
 	}
 	
 	
 	function getData() {
-		return data;
+		return [data,data1];
 	}
 	
 	var plot;
 
 	function updatePlot() {
-		plot.setData([getData()]);
+		plot.setData(getData());
 		plot.setupGrid();
 		plot.draw();
 	}
@@ -158,6 +172,7 @@ $(function() {
 		   sphereMaterial);
 
 		sphere.position.y  = 30;
+		sphere.position.x = 0.1;
 		// add the sphere to the scene
 		scene.add(sphere);
 		
@@ -231,7 +246,7 @@ $(function() {
   function animate() {
 
 		requestAnimationFrame( animate );
-		//setTimeout( function() { requestAnimationFrame( animate ); }, 1000 / 10 );
+		//setTimeout( function() { requestAnimationFrame( animate ); }, 1000 / 5 );
 		
 		if (jugControl.pause) return;
 		
@@ -249,16 +264,24 @@ $(function() {
 		
 		// sphere position in magnet coordinates
 		var SPM = new THREE.Vector2(SP.x, -(magnet.position.y - SP.y));
-		SPM = rotateVector2(SPM,magAng);
+		SPM = rotateVector2(SPM,-magAng);
+		
 		
 		// gravity vector, and in magnet coordinates
 		var G = new THREE.Vector2(0,-jugControl.gravity);
-		var GM = rotateVector2(G, magAng);
+		var GM = rotateVector2(G, -magAng);
 		
 		
 		// sphere velocity vector in magnet coordinates
 		var VM = new THREE.Vector2(sphere.v.x, sphere.v.y);
-		VM = rotateVector2(VM,magAng);
+		VM = rotateVector2(VM,-magAng);
+		
+		// sphere acceleration vector in magnet coordinates
+		AM = new THREE.Vector2(VM.x - jugControl.VML.x, VM.y - jugControl.VML.y);
+		
+		
+		jugControl.VML.x = VM.x;
+		jugControl.VML.y = VM.y;
 		
 		
 		// centripetal force vector in magnet coordinates
@@ -288,7 +311,7 @@ $(function() {
 		var dist = SPM.length();
 		
 		
-		PID.error = -SPM.y - jugControl.targetDist + (Math.random()-0.5)* jugControl.sensorNoise;
+		PID.error = dist - jugControl.targetDist + (Math.random()-0.5)* jugControl.sensorNoise;
 		
 		
 		
@@ -323,18 +346,21 @@ $(function() {
 		
 		
 		if (PID.error < 0) {
-			if (sphere.v.y  < 0) {
-				$("#info").html("cancelling");
+			if (SPM.y  < 0) {
+				//$("#info").html("cancelling");
 				
 				// ??  some kind of cancelling force?
-				//f = -sphere.v.y/2;
-				f = 0;
+				
+				// work out delta
+				var vc = - VM.y;
+			
+				f = vc * (1 + PID.error / jugControl.targetDist);
 				
 				
 			} else {
 				f = 0;
 				
-				$("#info").html("dropping");
+				//$("#info").html("dropping");
 			}
 			
 		} else {
@@ -342,15 +368,16 @@ $(function() {
 			// calc required velocity from current position
 			
 			//var vreq = Math.sqrt(2*jugControl.gravity * PID.error);
-			var vreq = Math.sqrt(2*(-GM.y + CM.y) * PID.error);
+			var vreq = Math.sqrt(2*(-GM.y - CM.y) * PID.error);
+			vreq = Math.sqrt(2*(-GM.y ) * PID.error);
 			
 			// work out delta
-			var vc = vreq - sphere.v.y;
+			var vc = vreq - VM.y;
 			
 			f = vc ;
 			
 			
-			$("#info").html("pulling");
+			//$("#info").html("pulling");
 			
 		}
 		
@@ -383,7 +410,7 @@ $(function() {
 		var VT = new THREE.Vector2(VO.y,VO.x);
 		
 		
-		V = rotateVector2(VT,-magAng);
+		V = rotateVector2(VT,magAng);
 		
 		
 		var fy = V.y;
@@ -407,58 +434,85 @@ $(function() {
 		var penT = 2 * Math.PI * Math.sqrt(SPM.length() / jugControl.gravity);
 		
 		var sAng = Math.atan2(SPM.x,-SPM.y);
-		var driveAng = jugControl.targetAng * Math.PI/180 + 0.1;
-		var drive = 0.04;
+		var driveAng = jugControl.targetAng * Math.PI/180;
+		var drive = jugControl.targetAng / 100;
+		
+		var oscTime =  thisTime - jugControl.switchTime;
+		
+		
+		jugControl.AMX = ((jugControl.AMX * 2) + AM.x) / 3;
 		
 		if (jugControl.coast) {
-			if ((jugControl.phase && SPM.x <=0) || (!jugControl.phase && SPM.x >=0)) {
+			
+			
+			if (Math.abs(VM.x) < jugControl.targetAng/50 ) 
+			{
 				jugControl.coast = false;
 			
 				jugControl.oscillations += 1;
+				
+				var tarTime = 10 * 2 * Math.PI * Math.sqrt(jugControl.targetDist / jugControl.gravity);
+				
+				jugControl.oscTime = 500;
+				
+				
+				jugControl.switchTime = thisTime;
 			}	
+			
+			//console.log("coasting");
+			$("#info").html("coasting");
 			
 		} else {
 			if (jugControl.phase) {
-				// driving clockwise
+				// driving ccw
 				// switching target is when sphere velocity is zero
 			
-				if (sAng > driveAng) {
+				$("#info").html("ccw");
+				//console.log("ccw");
+			
+				if (( jugControl.AMX >= 0)) {
 					jugControl.phase = false;
 					jugControl.coast = true;
 				
-					// increase velocity
-					//jugControl.driveV += 0.001;
-					
-					jugControl.targetAng += 1;
 				}
 			
 			} else {
-				// driving counterclockwise
-				// -5
+				// driving cw
+				$("#info").html("cw");
+				//console.log("cw");
+				
 				driveAng *= -1;
 			
 				drive *= -1;
 		
-				if (sAng < driveAng) {
+				if (( jugControl.AMX <= 0) ) {
 					jugControl.phase = true;
 					jugControl.coast = true;
-					//jugControl.driveV += 0.001;
+					
 				}
 			}
 			
 			if (jugControl.driveV > 3) jugControl.driveV = 3;
 			
-		
-			magnet.rotation.z += (driveAng - sAng)/2;
+			
+			// set magnet to proceed/retard magnet position by drive
+			
+			var newAng = magnet.rotation.z  + (sAng - drive)*(jugControl.targetAng/50);
+			jugControl.magV = newAng - magnet.rotation.z;
+			magnet.rotation.z = newAng;
 		}
 		
+		
+		// override
+		//magnet.rotation.z = jugControl.magRot * Math.PI / 180;
+		//magnet.rotation.z = Math.cos(thisTime * 0.007) *  jugControl.maxRot;
 		
 		
 		
 		var canvas=document.getElementById('canvas');
 		var ctx=canvas.getContext('2d');
 
-		ctx.clearRect(0, 0, canvas.width, canvas.height)
+		ctx.clearRect(0, 0, 300,250);
 		ctx.strokeStyle = "#CCC";
 		
 		var cx = 100;
@@ -484,38 +538,68 @@ $(function() {
 		
 		// draw sphere
 		ctx.beginPath();
-		ctx.arc(-SPM.x + cx, -SPM.y + cy, 10, 0, 2*Math.PI);
+		ctx.arc(SPM.x + cx, -SPM.y + cy, 20, 0, 2*Math.PI);
 		ctx.stroke();
 		
 		// draw gravity field vector
 		ctx.beginPath();
 		ctx.strokeStyle = "#F00";
-		ctx.moveTo(cx - SPM.x, cy -SPM.y);
-		ctx.lineTo(cx - SPM.x - 20*GM.x, cy - SPM.y - 20*GM.y);
+		ctx.moveTo(cx + SPM.x, cy -SPM.y);
+		ctx.lineTo(cx + SPM.x + 20*GM.x, cy - SPM.y - 20*GM.y);
 		ctx.stroke();
 		
 		// draw velocity vector
 		ctx.beginPath();
 		ctx.strokeStyle = "#550";
-		ctx.moveTo(cx - SPM.x, cy -SPM.y);
-		ctx.lineTo(cx - SPM.x - 20*VM.x, cy - SPM.y - 20*VM.y);
+		ctx.moveTo(cx + SPM.x, cy -SPM.y);
+		ctx.lineTo(cx + SPM.x + 20*VM.x, cy - SPM.y - 20*VM.y);
 		ctx.stroke();
 		
 		
 		// draw centripetal force vector
 		ctx.beginPath();
 		ctx.strokeStyle = "#00F";
-		ctx.moveTo(cx - SPM.x, cy -SPM.y);
-		ctx.lineTo(cx - SPM.x - 20*CM.x, cy - SPM.y - 20*CM.y);
+		ctx.moveTo(cx + SPM.x, cy -SPM.y);
+		ctx.lineTo(cx + SPM.x + 20*CM.x, cy - SPM.y - 20*CM.y);
 		ctx.stroke();
 		
 		
 		// draw magnetic field vector
 		ctx.beginPath();
 		ctx.strokeStyle = "#0F0";
-		ctx.moveTo(cx - SPM.x, cy -SPM.y);
-		ctx.lineTo(cx - SPM.x - 20*VT.x, cy - SPM.y - 20*VT.y);
+		ctx.moveTo(cx + SPM.x, cy -SPM.y);
+		ctx.lineTo(cx + SPM.x + 20*VT.x, cy - SPM.y - 20*VT.y);
 		ctx.stroke();
+		
+		
+		// *********
+		// draw position trace
+		ctx.fillStyle = 'rgba(255,255,255,0.01)';
+		ctx.fillRect(0, 250, 300,250);
+		
+		cy = 300;
+		ctx.strokeStyle = "#CCC";
+		
+		// draw x
+		ctx.beginPath();
+		ctx.moveTo(-100 + cx, cy);
+		ctx.lineTo(100 + cx, cy);
+		ctx.stroke();
+		
+		
+		// draw y
+		ctx.beginPath();
+		ctx.moveTo(cx, cy-100);
+		ctx.lineTo(cx, cy+110);
+		ctx.stroke();
+		
+		
+		
+		ctx.beginPath();
+		ctx.strokeStyle = "#A00";
+		ctx.arc(sphere.position.x + cx, -sphere.position.y + 100 + cy, 1, 0, 2*Math.PI);
+		ctx.stroke();
+		
 		
 		
 		if (sphere.position.y > magnet.position.y - 45) {
@@ -528,7 +612,8 @@ $(function() {
 		}
 		
 		if (frame < totalPoints) {
-			data[frame] = [frame,sAng];
+			data[frame] = [frame,PID.error];
+			data1[frame] = [frame,10*CM.y];
 			updatePlot();
 		} else {
 			frame = 0;
@@ -584,7 +669,7 @@ $(function() {
 
 	<div id="placeholder" class="graph"></div>
 
-	<canvas id="canvas" width="400" height="400" style="position:absolute;"></canvas>
+	<canvas id="canvas" width="500" height="500"></canvas>
 	
 </body>
 </html>
